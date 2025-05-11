@@ -1,0 +1,261 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supplement Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.10/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.5.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.5.0/firebase-firestore.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Firebase configuration (replace with your actual Firebase project credentials)
+    const firebaseConfig = {
+      apiKey: "YAIzaSyCpKqzfnDsXxumSG8okM_6hzBPWoXFgNz8",
+      authDomain: "supplment-tracker.firebaseapp.com",
+      projectId: "supplment-tracker",
+      storageBucket: "supplment-tracker.firebasestorage.app",
+      messagingSenderId: "1053436844689",
+      appId: "1:1053436844689:web:6213680c4fedd8a2c23d30"
+    };
+
+    // Initialize Firebase with error handling
+    let db;
+    try {
+      const app = firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+    } catch (error) {
+      console.error("Firebase initialization failed:", error);
+      alert("Failed to connect to the database. Please check Firebase configuration.");
+    }
+
+    function App() {
+      const [supplements, setSupplements] = useState([]);
+      const [name, setName] = useState('');
+      const [dosage, setDosage] = useState('');
+      const [unit, setUnit] = useState('mg');
+      const [frequency, setFrequency] = useState('Daily');
+      const [error, setError] = useState(null);
+
+      // Fetch supplements from Firestore
+      useEffect(() => {
+        if (!db) return;
+
+        const unsubscribe = db.collection('supplements').onSnapshot(
+          (snapshot) => {
+            const supps = snapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data()
+            }));
+            setSupplements(supps);
+          },
+          (err) => {
+            console.error("Firestore fetch error:", err);
+            setError("Failed to load supplements.");
+          }
+        );
+        return () => unsubscribe();
+      }, []);
+
+      // Add new supplement
+      const addSupplement = async (e) => {
+        e.preventDefault();
+        if (!db) {
+          setError("Database not connected.");
+          return;
+        }
+        if (name && dosage) {
+          try {
+            await db.collection('supplements').add({
+              name,
+              dosage: parseFloat(dosage),
+              unit,
+              frequency,
+              timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            setName('');
+            setDosage('');
+            setUnit('mg');
+            setFrequency('Daily');
+            setError(null);
+          } catch (err) {
+            console.error("Error adding supplement:", err);
+            setError("Failed to add supplement.");
+          }
+        } else {
+          setError("Please enter both name and dosage.");
+        }
+      };
+
+      // Delete supplement
+      const deleteSupplement = async (id) => {
+        if (!db) {
+          setError("Database not connected.");
+          return;
+        }
+        try {
+          await db.collection('supplements').doc(id).delete();
+          setError(null);
+        } catch (err) {
+          console.error("Error deleting supplement:", err);
+          setError("Failed to delete supplement.");
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-100 p-4">
+          <div className="max-w-4xl mx-auto">
+            <h1 className="text-3xl font-bold text-center mb-6">Supplement Tracker</h1>
+            
+            {/* Error Message */}
+            {error && (
+              <div className="bg-red-100 text-red-700 p-4 rounded mb-6">
+                {error}
+              </div>
+            )}
+
+            {/* Add Supplement Form */}
+            <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+              <h2 className="text-xl font-semibold mb-4">Add New Supplement</h2>
+              <form onSubmit={addSupplement} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Supplement Name"
+                  className="p-2 border rounded w-full"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={dosage}
+                    onChange={(e) => setDosage(e.target.value)}
+                    placeholder="Dosage"
+                    className="p-2 border rounded w-full"
+                    min="0"
+                    step="0.01"
+                  />
+                  <select
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                    className="p-2 border rounded"
+                  >
+                    <option value="mg">mg</option>
+                    <option value="g">g</option>
+                    <option value="mcg">mcg</option>
+                    <option value="IU">IU</option>
+                  </select>
+                </div>
+                <select
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value)}
+                  className="p-2 border rounded w-full"
+                >
+                  <option value="Daily">Daily</option>
+                  <option value="Weekly">Weekly</option>
+                  <option value="As Needed">As Needed</option>
+                </select>
+                <button
+                  type="submit"
+                  className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                >
+                  Add Supplement
+                </button>
+              </form>
+            </div>
+
+            {/* Supplement List */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4">Your Supplements</h2>
+              {supplements.length === 0 ? (
+                <p className="text-gray-500">No supplements added yet.</p>
+              ) : (
+                <div className="grid gap-4">
+                  {supplements.map((supp) => (
+                    <div
+                      key={supp.id}
+                      className="flex justify-between items-center p-4 border rounded"
+                    >
+                      <div>
+                        <h3 className="text-lg font-medium">{supp.name}</h3>
+                        <p className="text-gray-600">
+                          {supp.dosage} {supp.unit}, {supp.frequency}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => deleteSupplement(supp.id)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Render the app with error boundary
+    try {
+      ReactDOM.render(<App />, document.getElementById('root'));
+    } catch (error) {
+      console.error("React rendering error:", error);
+      document.getElementById('root').innerHTML = `
+        <div style="color: red; padding: 20px;">
+          <h1>Error</h1>
+          <p>Failed to load the application. Please check the console for details.</p>
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>
